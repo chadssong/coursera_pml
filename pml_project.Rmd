@@ -7,18 +7,152 @@ output:
     keep_md: yes
 ---
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+<style>
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
 
+
+
+
+</style>
+
+
+<br><br><br>  
+<hr>
+## Project Introduction
+<hr>
+- Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.   
+- In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.  
+- More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+<br><br><br>  
+<hr>
+## Data Preprocessing  
+<hr>
+
+### Load some packages
 ```{r}
-summary(cars)
+#install.packages("caret")
+#install.packages("rpart")
+#install.packages("rpart.plot")
+#install.packages("randomForest")
+#install.packages("corrplot")
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
 ```
 
-You can also embed plots, for example:
 
-```{r, echo=FALSE}
-plot(cars)
+### Download the Data
+```{r}
+trainUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainFile <- "./data/pml-training.csv"
+testFile  <- "./data/pml-testing.csv"
+if (!file.exists("./data")) {
+  dir.create("./data")
+}
+if (!file.exists(trainFile)) {
+  download.file(trainUrl, destfile=trainFile, method="curl")
+}
+if (!file.exists(testFile)) {
+  download.file(testUrl, destfile=testFile, method="curl")
+}
+```
+<br><br>
+### Read the Data
+After downloading the data from the data source, we can read the two csv files into two data frames.  
+```{r}
+trainRaw <- read.csv("./data/pml-training.csv")
+testRaw <- read.csv("./data/pml-testing.csv")
+head(trainRaw) # -> There are so many "NA"s
+dim(trainRaw)
+dim(testRaw)
+```
+The training data set contains 19622 observations and 160 variables, while the testing data set contains 20 observations and 160 variables. The "classe" variable in the training set is the outcome to predict.  
+<br><br>    
+### Clean the data
+In this step, we will clean the data and get rid of observations with missing values as well as some meaningless variables.  
+```{r}
+sum(complete.cases(trainRaw))
+```
+First, we remove columns that contain NA missing values.
+```{r}
+trainTemp <- trainRaw[, colSums(is.na(trainRaw)) == 0] 
+testTemp <- testRaw[, colSums(is.na(testRaw)) == 0] 
+dim(trainTemp) # Almost half variables removed
+```
+Next, we get rid of some columns that do not contribute much to the accelerometer measurements.
+```{r}
+classe <- trainTemp$classe
+trainRemove <- grepl("^X|timestamp|window", names(trainTemp))
+trainTemp <- trainTemp[,!trainRemove]
+trainCleaned <- trainTemp[, sapply(trainTemp, is.numeric)]
+trainCleaned$classe <- classe
+testRemove <- grepl("^X|timestamp|window", names(testTemp))
+testTemp <- testTemp[, !testRemove]
+testCleaned <- testTemp[, sapply(testTemp, is.numeric)]
+```
+Now, the cleaned training data set contains 19622 observations and 53 variables, while the testing data set contains 20 observations and 53 variables. The "classe" variable is still in the cleaned training set.
+<br><br>
+### Slice the data
+Then, we can split the cleaned training set into a pure training data set (70%) and a validation data set (30%). We will use the validation data set to conduct cross validation in future steps.
+```{r}
+set.seed(1122) # For reproducibile purpose
+inTrain <- createDataPartition(trainCleaned$classe, p=0.70, list=F)
+trainData <- trainCleaned[inTrain, ]
+testData <- trainCleaned[-inTrain, ]
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+<br><br><br>  
+<hr>
+## Data Modeling 
+<hr>
+We fit a predictive model for activity recognition using <b>Random Forest algorithm because it automatically selects important variables and is robust to correlated covariates & outliers in general.</b> We will use <b>5-fold cross validation</b> when applying the algorithm.
+```{r}
+controlRf <- trainControl(method="cv", 5)
+# method : Random Forest
+modelRf <- train(classe ~ ., data=trainData, method="rf", trControl=controlRf, ntree=250)
+modelRf
+```
+Then, we estimate the performance of the model on the validation data set.
+```{r}
+predictRf <- predict(modelRf, testData)
+confusionMatrix(testData$classe, predictRf)
+accuracy <- postResample(predictRf, testData$classe)
+accuracy
+oose <- 1 - as.numeric(confusionMatrix(testData$classe, predictRf)$overall[1])
+oose
+```
+So, the estimated accuracy of the model is 99.21% and the estimated out-of-sample error is 0.78%.
+
+<br><br><br>  
+<hr>
+## Predicting for Test Data Set
+<hr>
+Now, we apply the model to the original testing data set downloaded from the data source. We remove the problem_id column first.
+```{r}
+result <- predict(modelRf, testCleaned[, -length(names(testCleaned))])
+result
+```
+
+<br><br><br>  
+<hr>
+## Appendix: Figures
+<hr>
+
+1. Correlation Matrix Visualization
+```{r}
+corrPlot <- cor(trainData[, -length(names(trainData))])
+corrplot(corrPlot, method="color")
+```
+
+2. Decision Tree Visualization
+```{r}
+treeModel <- rpart(classe ~ ., data=trainData, method="class")
+prp(treeModel) # fast plot
+```
+
